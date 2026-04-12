@@ -1,0 +1,15 @@
+# Production overrides — deploy with:
+#   helm install order-worker ./helm/order-worker -f ./helm/order-worker/values-prod.yaml
+
+replicaCount: 3
+
+image:
+  pullPolicy: Always
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi

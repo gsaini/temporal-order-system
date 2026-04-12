@@ -1,0 +1,32 @@
+# Default values for the order-worker chart.
+# Override these with --set or -f values-prod.yaml
+
+replicaCount: 1
+
+image:
+  repository: order-worker
+  tag: latest
+  pullPolicy: IfNotPresent
+
+temporal:
+  # Address of the Temporal frontend service.
+  # When Temporal is deployed via its own Helm chart in the same cluster,
+  # the default service name is "temporal-frontend".
+  address: "temporal-frontend:7233"
+  taskQueue: "order-processing"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+healthCheck:
+  enabled: true
+  port: 8080
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,28 @@
+version: "3.8"
+
+# Spins up a local Temporal dev server + your worker.
+# Usage:  docker-compose up -d
+
+services:
+  # ---- Temporal dev server (all-in-one) ------------------------------------
+  # This single container includes the Temporal server, a built-in SQLite
+  # backend, and the Web UI — perfect for local development.
+  temporal:
+    image: temporalio/auto-setup:latest
+    ports:
+      - "7233:7233"   # gRPC frontend (workers + clients connect here)
+      - "8233:8233"   # Web UI  →  http://localhost:8233
+    environment:
+      - DB=sqlite
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+
+  # ---- Your order worker ---------------------------------------------------
+  order-worker:
+    build: .
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TASK_QUEUE=order-processing
+    # Wait a few seconds for Temporal to be ready
+    restart: on-failure

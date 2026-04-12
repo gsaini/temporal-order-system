@@ -1,0 +1,17 @@
+{{- if .Values.healthCheck.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "order-worker.fullname" . }}
+  labels:
+    {{- include "order-worker.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "order-worker.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: health
+      port: {{ .Values.healthCheck.port }}
+      targetPort: {{ .Values.healthCheck.port }}
+      protocol: TCP
+{{- end }}
