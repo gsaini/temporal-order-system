@@ -2,6 +2,58 @@
 
 A learning project that combines **Temporal** (workflow orchestration) and **Helm** (Kubernetes deployment).
 
+## Architecture
+
+```
+                         ┌──────────────────────────┐
+                         │       Starter CLI         │
+                         │    (starter/main.py)      │
+                         │  start / query / signal   │
+                         └────────────┬─────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Docker Compose / Kubernetes                   │
+│                                                                 │
+│  ┌──────────────┐    ┌──────────────────┐    ┌──────────────┐  │
+│  │  PostgreSQL   │◄───│  Temporal Server  │───►│  Temporal UI  │ │
+│  │    :5432      │    │     :7233 gRPC    │    │    :8233      │ │
+│  └──────────────┘    └────────┬─────────┘    └──────────────┘  │
+│                               │                                 │
+│                     dispatches tasks                             │
+│                               │                                 │
+│                               ▼                                 │
+│             ┌─────────────────────────────────┐                 │
+│             │     Worker  (worker/main.py)     │                │
+│             │                                  │                │
+│             │  ┌────────────────────────────┐  │                │
+│             │  │      OrderWorkflow         │  │                │
+│             │  │                            │  │                │
+│             │  │  1. Validate Inventory     │  │                │
+│             │  │           │                │  │                │
+│             │  │           ▼                │  │                │
+│             │  │  2. Process Payment        │  │                │
+│             │  │     (retry: 5 attempts)    │  │                │
+│             │  │           │                │  │                │
+│             │  │           ▼                │  │                │
+│             │  │  3. Ship Order             │  │                │
+│             │  │           │                │  │                │
+│             │  │           ▼                │  │                │
+│             │  │  4. Notify: Shipped        │  │                │
+│             │  │           │                │  │                │
+│             │  │           ▼                │  │                │
+│             │  │  5. Wait for Signal ◄──────┼──┼── confirm_delivery
+│             │  │           │                │  │                │
+│             │  │           ▼                │  │                │
+│             │  │  6. Notify: Delivered      │  │                │
+│             │  │           │                │  │                │
+│             │  │           ▼                │  │                │
+│             │  │  7. Completed              │  │                │
+│             │  └────────────────────────────┘  │                │
+│             └─────────────────────────────────┘                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
 ## Project Structure
 
 ```

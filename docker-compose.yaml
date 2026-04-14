@@ -7,14 +7,35 @@ services:
   # ---- Temporal dev server (all-in-one) ------------------------------------
   # This single container includes the Temporal server, a built-in SQLite
   # backend, and the Web UI — perfect for local development.
+  postgresql:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    ports:
+      - "5432:5432"
+
   temporal:
     image: temporalio/auto-setup:latest
+    depends_on:
+      - postgresql
     ports:
       - "7233:7233"   # gRPC frontend (workers + clients connect here)
-      - "8233:8233"   # Web UI  →  http://localhost:8233
     environment:
-      - DB=sqlite
-      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=postgresql
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    depends_on:
+      - temporal
+    ports:
+      - "8233:8080"   # Web UI  →  http://localhost:8233
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
 
   # ---- Your order worker ---------------------------------------------------
   order-worker:
