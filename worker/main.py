@@ -18,6 +18,8 @@ from activities.order_activities import (
     process_payment,
     ship_order,
     send_notification,
+    refund_payment,
+    restore_inventory,
 )
 from workflow.order_workflow import OrderWorkflow
 
@@ -38,6 +40,8 @@ async def main() -> None:
             process_payment,
             ship_order,
             send_notification,
+            refund_payment,
+            restore_inventory,
         ],
     )
 

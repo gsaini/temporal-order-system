@@ -62,6 +62,35 @@ async def ship_order(order: Order) -> str:
     return "SHIPPED"
 
 
+# -- Compensation activities (saga pattern) ------------------------------------
+
+@activity.defn
+async def refund_payment(order: Order) -> str:
+    """Reverse a previously processed payment.
+
+    Called as compensation when a later step (e.g. shipping) fails after
+    payment has already succeeded.
+    """
+    activity.logger.info(f"Refunding payment for order {order.order_id}, amount=${order.amount}")
+    await asyncio.sleep(0.8)  # simulate refund API call
+
+    activity.logger.info(f"Payment refunded for order {order.order_id}")
+    return "REFUNDED"
+
+
+@activity.defn
+async def restore_inventory(order: Order) -> str:
+    """Put the reserved item back into available inventory.
+
+    Called as compensation when inventory was reserved but a later step failed.
+    """
+    activity.logger.info(f"Restoring inventory for order {order.order_id}, item={order.item}")
+    await asyncio.sleep(0.3)  # simulate inventory update
+
+    activity.logger.info(f"Inventory restored for order {order.order_id}")
+    return "INVENTORY_RESTORED"
+
+
 @activity.defn
 async def send_notification(order: Order, message: str) -> str:
     """Send an order status notification to the customer (email/SMS stub)."""
