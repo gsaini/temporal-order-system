@@ -2,6 +2,234 @@
 
 A learning project that combines **Temporal** (workflow orchestration) and **Helm** (Kubernetes deployment).
 
+---
+
+## Understanding Temporal
+
+### What problem does Temporal solve?
+
+Imagine writing code for a process that involves multiple steps across unreliable systems — validate inventory, charge the customer, ship the package, notify the user. In plain code you have to handle:
+
+- **Crashes mid-way** — what if the process dies after charging but before shipping?
+- **Transient failures** — network hiccups, gateway timeouts, rate limits
+- **Long-running waits** — pausing hours/days for human input or external events
+- **Retry logic** — exponential backoff, max attempts, non-retryable errors
+- **State tracking** — where are we in the pipeline? what has been done?
+- **Visibility** — what is my system doing right now?
+
+Temporal turns all of this into a solved problem. You write your business logic as a normal-looking async function, and Temporal guarantees that it runs to completion — even across crashes, restarts, and multi-day pauses — with full history, retries, and observability for free.
+
+### Core concepts
+
+#### 1. Workflow
+
+A workflow is **durable, deterministic code** that orchestrates a business process. In this project, [`OrderWorkflow`](workflow/order_workflow.py) orchestrates the entire order pipeline.
+
+Key properties:
+
+- **Durable** — Temporal records every step to a database. If the worker dies, the workflow resumes exactly where it left off on another worker.
+- **Deterministic** — workflow code must produce the same output given the same event history. You can't use `random`, `time.time()`, `datetime.now()`, or `requests.get()` directly inside a workflow. Instead, use workflow-safe APIs: `workflow.now()`, `workflow.random()`, and call activities for any I/O.
+- **Long-running** — workflows can pause for seconds or years without consuming worker resources.
+
+```python
+@workflow.defn
+class OrderWorkflow:
+    @workflow.run
+    async def run(self, order: Order) -> OrderStatus:
+        await workflow.execute_activity(validate_inventory, order, ...)
+        await workflow.execute_activity(process_payment, order, ...)
+        # ...
+```
+
+#### 2. Activity
+
+An activity is where **side effects** happen — database writes, API calls, sending email, charging payments. Activities are **regular functions** (not deterministic-constrained), and Temporal handles their retries, timeouts, and result persistence.
+
+```python
+@activity.defn
+async def process_payment(order: Order) -> str:
+    # Real API call here — Temporal will retry this on failure.
+    return "PAYMENT_OK"
+```
+
+The workflow calls activities via `workflow.execute_activity(...)`. The result is persisted, so on replay the workflow doesn't re-run the activity — it just reads the stored result.
+
+#### 3. Worker
+
+A worker is a **process that hosts workflow and activity code**. It connects to the Temporal server, polls a **task queue** for work, and executes it. See [`worker/main.py`](worker/main.py).
+
+You can run multiple workers for scale or redundancy. Temporal distributes tasks automatically.
+
+```python
+worker = Worker(
+    client,
+    task_queue="order-processing",
+    workflows=[OrderWorkflow],
+    activities=[validate_inventory, process_payment, ...],
+)
+```
+
+#### 4. Task queue
+
+A **named channel** where workers pick up tasks. Workflows and activities are dispatched to workers via task queues. This project uses `order-processing`.
+
+You can route different workflows/activities to different queues — e.g., a high-priority queue with dedicated workers, or a GPU queue for ML activities.
+
+#### 5. Temporal Server
+
+The backend that stores workflow state, dispatches tasks, and provides the API. It runs independently of your workers. In this project it's a Docker container ([docker-compose.yaml](docker-compose.yaml)) backed by PostgreSQL.
+
+For production, you can self-host on Kubernetes or use **Temporal Cloud** (managed service).
+
+---
+
+### Temporal features used in this project
+
+#### Retry policies
+
+Each activity can have a custom retry policy. In [`order_workflow.py`](workflow/order_workflow.py), payment has a generous retry policy because the gateway is flaky:
+
+```python
+PAYMENT_RETRY = RetryPolicy(
+    initial_interval=timedelta(seconds=1),   # wait 1s before first retry
+    backoff_coefficient=2.0,                 # then 2s, 4s, 8s, 16s...
+    maximum_interval=timedelta(seconds=30),  # cap at 30s
+    maximum_attempts=5,                      # give up after 5 tries
+)
+```
+
+Temporal handles all the retry math. You don't write loops.
+
+#### Non-retryable errors
+
+Not every error should be retried. Out-of-stock is permanent — no amount of retrying will fix it:
+
+```python
+raise activity.ApplicationError(
+    f"Item '{order.item}' is out of stock",
+    type="OUT_OF_STOCK",
+    non_retryable=True,
+)
+```
+
+See [`activities/order_activities.py`](activities/order_activities.py).
+
+#### Signals — external input to a running workflow
+
+A signal is a **message sent into a workflow from outside**. The workflow pauses until it arrives:
+
+```python
+@workflow.signal
+async def confirm_delivery(self) -> None:
+    self._delivery_confirmed = True
+
+# Later in run():
+await workflow.wait_condition(lambda: self._delivery_confirmed, timeout=timedelta(days=7))
+```
+
+From the CLI:
+
+```bash
+python -m starter.main signal --order-id ORD-001
+```
+
+Signals are **buffered** — if sent before the workflow is ready to receive, they wait. They're also **durable** — a signal arriving while the worker is down is not lost.
+
+#### Queries — read state without side effects
+
+A query lets you **read a workflow's current state** without affecting it:
+
+```python
+@workflow.query
+def get_status(self) -> OrderStatus:
+    return self._status
+```
+
+Queries are synchronous, return immediately, and don't appear in the workflow history. Great for dashboards, APIs, or `python -m starter.main query`.
+
+#### Saga / compensation pattern
+
+If a later step fails after earlier steps succeeded, the workflow **compensates** in reverse — refunds payment, restores inventory. Implemented in [`OrderWorkflow._compensate`](workflow/order_workflow.py):
+
+```python
+try:
+    await execute_activity(validate_inventory, ...)
+    completed_steps.append("INVENTORY")
+    await execute_activity(process_payment, ...)
+    completed_steps.append("PAYMENT")
+    await execute_activity(ship_order, ...)  # fails here!
+except ActivityError:
+    # Reverse: refund payment, then restore inventory
+    await self._compensate(order, completed_steps)
+```
+
+This gives you **transactional semantics across services** without a distributed transaction coordinator.
+
+#### Timeouts
+
+Three distinct timeouts you can set on activities:
+
+- **`start_to_close_timeout`** — max time for a single activity attempt (after it starts on a worker)
+- **`schedule_to_close_timeout`** — total time from scheduling until final result (including retries)
+- **`heartbeat_timeout`** — for long-running activities, fail if no heartbeat within this window
+
+Workflows also have timeouts — e.g., the 7-day delivery signal deadline:
+
+```python
+delivered = await workflow.wait_condition(
+    lambda: self._delivery_confirmed,
+    timeout=timedelta(days=7),
+)
+```
+
+#### Workflow sandbox
+
+Workflow code runs in a restricted sandbox to enforce determinism. Non-deterministic imports (like anything that does I/O) must go through `workflow.unsafe.imports_passed_through()`:
+
+```python
+with workflow.unsafe.imports_passed_through():
+    from activities.order_activities import validate_inventory, ...
+```
+
+---
+
+### How it all fits together
+
+```
+┌─────────┐         ┌──────────────────┐         ┌──────────┐
+│ Starter │─ start ─►│  Temporal Server  │◄─ poll ─│  Worker  │
+│  CLI    │         │  (PostgreSQL)     │         │          │
+│         │◄─ result─│  - event history  │─dispatch►│  - runs  │
+│         │         │  - task queues    │         │   workflow│
+│         │─signal ─►│  - timers         │         │  - runs  │
+│         │         │                   │         │   activities│
+│         │─ query ─►│                   │◄─ result─│          │
+└─────────┘         └──────────────────┘         └──────────┘
+```
+
+1. **Starter** sends "start workflow" RPC to the server
+2. **Server** persists the start event and schedules a workflow task
+3. **Worker** polls the task queue, picks up the workflow task
+4. Worker runs `OrderWorkflow.run` until it hits `await execute_activity(...)`
+5. Worker reports "I need this activity run" back to the server
+6. Server schedules an activity task; worker (maybe a different one) picks it up
+7. Activity runs, returns result; server persists the result
+8. Worker resumes workflow with the activity result, continues to next `await`
+9. Each step is an event in the persistent **event history**
+
+**Crashes don't matter.** If the worker dies mid-workflow, another worker picks up from the last persisted event. The workflow code "replays" from the beginning, reading prior results from the event history, until it catches up to where the crash happened.
+
+---
+
+### Debugging & observability
+
+- **Web UI** at <http://localhost:8233> shows every workflow's event history, including activity executions, retries, signals, and failures
+- **Workflow IDs** are user-chosen (this project uses `order-{order_id}`), so you can find a specific workflow easily
+- **Temporal CLI** (`tctl` / `temporal`) lets you script workflow starts, signals, queries, and terminations
+- **Logging** — use `workflow.logger` inside workflows and `activity.logger` inside activities; they correlate logs to the workflow/activity context
+
+---
+
 ## Architecture
 
 ```
