@@ -1,5 +1,13 @@
 # Temporal Order Processing System
 
+[![Tests](https://img.shields.io/github/actions/workflow/status/gsaini/temporal-order-system/tests.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=tests)](https://github.com/gsaini/temporal-order-system/actions/workflows/tests.yml)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Temporal](https://img.shields.io/badge/Temporal-1.7.1-7C4DFF?style=for-the-badge&logo=temporal&logoColor=white)](https://github.com/temporalio/sdk-python)
+[![Helm](https://img.shields.io/badge/Helm-3.x-0F1689?style=for-the-badge&logo=helm&logoColor=white)](https://helm.sh/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-Ready-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)](https://kubernetes.io/)
+[![Last commit](https://img.shields.io/github/last-commit/gsaini/temporal-order-system?style=for-the-badge&logo=github&logoColor=white)](https://github.com/gsaini/temporal-order-system/commits/main)
+
 A learning project that combines **Temporal** (workflow orchestration) and **Helm** (Kubernetes deployment).
 
 ---

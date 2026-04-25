@@ -17,6 +17,7 @@ workflow's activity lookups resolve without modification.
 import pytest
 from temporalio import activity
 from temporalio.client import Client
+from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
@@ -65,14 +66,25 @@ async def mock_restore_inventory(order: Order) -> str:
 
 @activity.defn(name="process_payment")
 async def mock_payment_always_fails(order: Order) -> str:
-    """Failing mock for ``process_payment``; used to exercise saga rollback."""
-    raise RuntimeError("Payment gateway unavailable")
+    """Failing mock for ``process_payment``; used to exercise saga rollback.
+
+    Raises a non-retryable error so the workflow short-circuits its
+    ``PAYMENT_RETRY`` policy and reaches compensation immediately, keeping
+    the test fast.
+    """
+    raise ApplicationError("Payment gateway unavailable", non_retryable=True)
 
 
 @activity.defn(name="ship_order")
 async def mock_shipping_always_fails(order: Order) -> str:
-    """Failing mock for ``ship_order``; used to exercise saga rollback."""
-    raise RuntimeError("Shipping provider down")
+    """Failing mock for ``ship_order``; used to exercise saga rollback.
+
+    The workflow does not configure a retry policy on ``ship_order``, so the
+    default (unlimited retries) would loop forever on a transient error.
+    Marking this non-retryable lets the workflow surface the failure to the
+    saga handler on the first attempt.
+    """
+    raise ApplicationError("Shipping provider down", non_retryable=True)
 
 
 PASSING_ACTIVITIES = [
@@ -110,8 +122,12 @@ async def run_with_activities(env: WorkflowEnvironment, activities, fn):
 async def test_happy_path():
     """Full order flow: start → signal delivery → completed.
 
-    All activities succeed, the delivery signal is sent immediately, and the
-    workflow is expected to reach the ``COMPLETED`` terminal state.
+    All activities succeed, the delivery signal is sent atomically with
+    workflow start (via ``start_signal``) so that ``_delivery_confirmed`` is
+    already True when the workflow reaches its ``wait_condition``. This
+    avoids a race in :meth:`WorkflowEnvironment.start_time_skipping` where
+    time-skipping would otherwise fire the 7-day delivery timer before a
+    post-start signal is processed.
     """
     async with await WorkflowEnvironment.start_time_skipping() as env:
 
@@ -121,9 +137,8 @@ async def test_happy_path():
                 TEST_ORDER,
                 id="test-happy-path",
                 task_queue=TASK_QUEUE,
+                start_signal="confirm_delivery",
             )
-
-            await handle.signal(OrderWorkflow.confirm_delivery)
 
             result = await handle.result()
 
